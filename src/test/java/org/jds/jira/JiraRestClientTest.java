@@ -1,6 +1,7 @@
 package org.jds.jira;
 
 
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
@@ -10,6 +11,7 @@ import java.net.URI;
 import java.util.concurrent.ExecutionException;
 
 import org.jds.services.JIRAService;
+import org.jds.services.JIRAServiceImpl;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Value;
@@ -73,20 +75,48 @@ public class JiraRestClientTest {
 		uri = URI.create(HTTP_JIRA_URL);
 		factory = new AsynchronousJiraRestClientFactory();
 		restClient = factory.createWithBasicHttpAuthentication(uri, USERNAME, PASSWORD);
-		jiraService = new JIRAService(restClient);
+		jiraService = new JIRAServiceImpl();
 	}
 
 	@Test  
-	void testCreateIssue() throws InterruptedException, ExecutionException {  
+	void testIssue() throws InterruptedException, ExecutionException {  
+
+		// Get Project
+		Promise<Project> projectType = restClient.getProjectClient().getProject(PROJECT_KEY);
+		BasicProject project = projectType.get();
 
         var issueTypeId = getIssueTypeId(PROJECT_KEY, ISSUE_TYPE);
 
 		final IssueRestClient issueClient = restClient.getIssueClient();
+		String issueKey = "";
 		try {
 			IssueInput isssue = new IssueInputBuilder(PROJECT_KEY, issueTypeId, "API JIRA Test").build();
 			Promise<BasicIssue> createIssue = issueClient.createIssue(isssue);
 			BasicIssue issue = createIssue.claim();
-			log.info("Created issue: {}", issue.getKey());
+			issueKey = issue.getKey();
+			log.info("Created issue: {}", issueKey);
+			assertTrue(issueKey.length() > 0);
+		} catch(Exception ex) {
+			ex.printStackTrace();
+		}
+
+		// Update Issue
+		try {
+			Promise<Issue> issue = issueClient.getIssue(issueKey);
+			Issue issueToUpdate = issue.claim();
+			IssueInput issueInput = new IssueInputBuilder(project, issueToUpdate.getIssueType()).setSummary("API JIRA Test 2.1").build();
+			issueClient.updateIssue(issueKey, issueInput);
+			log.info("Updated issue: {}", issueKey);
+		} catch(Exception ex) {
+			ex.printStackTrace();
+		}
+
+		// Delete Issue
+		try {
+			Promise<Issue> issue = issueClient.getIssue(issueKey);
+			Issue issueToDelete = issue.claim();
+			issueClient.deleteIssue(issueToDelete.getKey(), true);
+			log.info("Deleted issue: " + issueToDelete.getKey());
 		} catch(Exception ex) {
 			ex.printStackTrace();
 		}
@@ -108,78 +138,41 @@ public class JiraRestClientTest {
 	}
 
 	@Test
-	void testUpdateIssue() throws InterruptedException, ExecutionException {
+	void testGetComments() throws InterruptedException, ExecutionException {
 
-		// Get Project
-        Promise<Project> projectType = restClient.getProjectClient().getProject(PROJECT_KEY);
-		BasicProject project = projectType.get();
-
-		// Update Issue
+		// Create Issue
 		final IssueRestClient issueClient = restClient.getIssueClient();
+		String issueKey = "";
+
+		var issueTypeId = getIssueTypeId(PROJECT_KEY, ISSUE_TYPE);
+
 		try {
-			Promise<Issue> issue = issueClient.getIssue("JDS-2");
-			Issue issueToUpdate = issue.claim();
-			IssueInput issueInput = new IssueInputBuilder(project, issueToUpdate.getIssueType()).setSummary("API JIRA Test 2.1").build();
-			issueClient.updateIssue("JDS-2", issueInput);
-			log.info("Updated issue: JDS-2");
+			IssueInput isssue = new IssueInputBuilder(PROJECT_KEY, issueTypeId, "API JIRA Test").build();
+			Promise<BasicIssue> createIssue = issueClient.createIssue(isssue);
+			BasicIssue issue = createIssue.claim();
+			issueKey = issue.getKey();
+			log.info("Created issue: {}", issueKey);
+			assertTrue(issueKey.length() > 0);
 		} catch(Exception ex) {
 			ex.printStackTrace();
 		}
-	}
 
-	@Test
-	void testDeleteIssue() throws InterruptedException, ExecutionException {
-
-		// Delete Issue
-		final IssueRestClient issueClient = restClient.getIssueClient();
+		// Comment Issue
 		try {
-			Promise<Issue> issue = issueClient.getIssue("JDS-3");
-			Issue issueToDelete = issue.claim();
-			issueClient.deleteIssue(issueToDelete.getKey(), true);
-			log.info("Deleted issue: JDS-3");
-		} catch(Exception ex) {
-			ex.printStackTrace();
-		}
-	}
-
-	@Test
-	void testGetIssue() throws InterruptedException, ExecutionException {
-
-		// Get Issue
-		final IssueRestClient issueClient = restClient.getIssueClient();
-		try {
-			Promise<Issue> issue = issueClient.getIssue("JDS-1");
-			Issue issueToGet = issue.claim();
-			log.info("Got issue: {}", issueToGet.getKey());
-		} catch(Exception ex) {
-			ex.printStackTrace();
-		}
-	}
-
-	@Test
-	void testCommentIssue() throws InterruptedException, ExecutionException {
-
-		// Get Issue
-		final IssueRestClient issueClient = restClient.getIssueClient();
-		try {
-			Promise<Issue> issue = issueClient.getIssue("JDS-1");
+			Promise<Issue> issue = issueClient.getIssue(issueKey);
 			Issue issueToGet = issue.claim();
 			issueClient.addComment(issueToGet.getCommentsUri(), Comment.valueOf("This is an important comment to reply."));
 			log.info("Added comment to issue: {}", issueToGet.getKey());
 		} catch(Exception ex) {
 			ex.printStackTrace();
 		}
-	}
 
-	@Test
-	void testGetComments() throws InterruptedException, ExecutionException {
-
-		// Get Issue
-		final IssueRestClient issueClient = restClient.getIssueClient();
+		// Get Comments and reply
 		try {
-			Promise<Issue> issue = issueClient.getIssue("JDS-1");
+			Promise<Issue> issue = issueClient.getIssue(issueKey);
 			Issue issueToGet = issue.claim();
 			Iterable<Comment> comments = issueToGet.getComments();
+			assertTrue(comments.iterator().hasNext());
 			for(Comment comment : comments) {
 				log.info("Got comment: {}", comment.getBody());
 
@@ -194,9 +187,8 @@ public class JiraRestClientTest {
 		}
 
 		// Assert that the comment is available
-		final IssueRestClient issueClient2 = restClient.getIssueClient();
 		try {
-			Promise<Issue> issue = issueClient2.getIssue("JDS-1");
+			Promise<Issue> issue = issueClient.getIssue(issueKey);
 			Issue issueToGet = issue.claim();
 			Iterable<Comment> comments = issueToGet.getComments();
 			for(Comment comment : comments) {
@@ -206,6 +198,13 @@ public class JiraRestClientTest {
 				}
 				log.info("Got comment: {}", comment.getBody());
 			}
+		} catch(Exception ex) {
+			ex.printStackTrace();
+		}
+
+		// Delete Issue
+		try {
+			issueClient.deleteIssue(issueKey, true).claim();
 		} catch(Exception ex) {
 			ex.printStackTrace();
 		}
@@ -261,6 +260,7 @@ public class JiraRestClientTest {
 		try {
 			issueClient.deleteIssue(issue.getKey(), true);
 			log.info("Deleted issue: {}", issue.getKey());
+			assertNull(issueClient.getIssue(issue.getKey()).claim());
 		} catch(Exception ex) {
 			ex.printStackTrace();
 		}
@@ -269,8 +269,22 @@ public class JiraRestClientTest {
 	@Test
 	void testGetFields() throws InterruptedException, ExecutionException {
 
-		// Get Issue
+		// Create Issue
 		final IssueRestClient issueClient = restClient.getIssueClient();
+		String issueKey = "";
+
+		var issueTypeId = getIssueTypeId(PROJECT_KEY, ISSUE_TYPE);
+
+		try {
+			IssueInput isssue = new IssueInputBuilder(PROJECT_KEY, issueTypeId, "API JIRA Test").build();
+			Promise<BasicIssue> createIssue = issueClient.createIssue(isssue);
+			BasicIssue issue = createIssue.claim();
+			issueKey = issue.getKey();
+			log.info("Created issue: {}", issueKey);
+			assertTrue(issueKey.length() > 0);
+		} catch(Exception ex) {
+			ex.printStackTrace();
+		}
 
 		// Get Fields
 		try {
@@ -280,6 +294,7 @@ public class JiraRestClientTest {
 			for(IssueField field : fields) {
 				log.info("Got field: {}", field.getName());
 			}
+			assertTrue(fields.iterator().hasNext());
 		} catch(Exception ex) {
 			ex.printStackTrace();
 		}
