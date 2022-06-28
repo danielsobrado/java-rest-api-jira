@@ -2,6 +2,7 @@ package org.jds.services;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
 import java.util.concurrent.ExecutionException;
@@ -17,9 +18,9 @@ import com.atlassian.jira.rest.client.api.domain.Attachment;
 import com.atlassian.jira.rest.client.api.domain.BasicIssue;
 import com.atlassian.jira.rest.client.api.domain.Comment;
 import com.atlassian.jira.rest.client.api.domain.Issue;
+import com.atlassian.jira.rest.client.api.domain.IssueField;
 import com.atlassian.jira.rest.client.api.domain.IssueType;
 import com.atlassian.jira.rest.client.api.domain.Project;
-import com.atlassian.jira.rest.client.api.domain.Transition;
 import com.atlassian.jira.rest.client.api.domain.User;
 import com.atlassian.jira.rest.client.api.domain.input.IssueInput;
 import com.atlassian.jira.rest.client.api.domain.input.IssueInputBuilder;
@@ -37,41 +38,32 @@ import lombok.extern.slf4j.Slf4j;
 @Service
 public class JIRAServiceImpl implements JIRAService {
 
-    @Value("${jira.url}")
-    private String url = null;
+	@Value("${jira.username}")
+	private static final String USERNAME = "dalamar01977";
 
-    @Value("${jira.username}")
-    private String username = null;
-
-    @Value("${jira.password}")
-    private String password = null;
+	@Value("${jira.password}")
+	private static final String PASSWORD = "admin";
+	
+	@Value("${jira.url}")
+	private static final String HTTP_JIRA_URL = "http://127.0.0.1:8081/";
 
     private URI getJiraUri() {
-        return URI.create(this.url);
+        return URI.create(HTTP_JIRA_URL);
     }
 
     private JiraRestClient getJiraRestClient() {
         return new AsynchronousJiraRestClientFactory()
-                .createWithBasicHttpAuthentication(getJiraUri(), this.username, this.password);
-    }
-
-    private static Transition getTransitionByName(Iterable<Transition> transitions, String transitionName) {
-        for (Transition transition : transitions) {
-            if (transition.getName().equals(transitionName)) {
-                return transition;
-            }
-        }
-        return null;
+                .createWithBasicHttpAuthentication(getJiraUri(), USERNAME, PASSWORD);
     }
 
     @Override
-    public void createIssue(String projectKey, String summary, String description, String assignee,
+    public BasicIssue createIssue(String projectKey, String summary, String description, String assignee,
             String issueType) throws InterruptedException, ExecutionException {
         log.info("JIRAServiceV9Impl.createIssue()");
 
         AsynchronousJiraRestClientFactory factory = new AsynchronousJiraRestClientFactory();
-        URI jiraServerUri = URI.create(url);
-        JiraRestClient restClient = factory.createWithBasicHttpAuthentication(jiraServerUri, username, password);
+        URI jiraServerUri = URI.create(HTTP_JIRA_URL);
+        JiraRestClient restClient = factory.createWithBasicHttpAuthentication(jiraServerUri, USERNAME, PASSWORD);
 
         // Get Project
         Promise<Project> projectType = restClient.getProjectClient().getProject(projectKey);
@@ -84,23 +76,19 @@ public class JIRAServiceImpl implements JIRAService {
         var issueTypeId = getIssueTypeId(projectType, issueType);
 
         final IssueRestClient issueClient = restClient.getIssueClient();
-        try {
-            IssueInput isssue = new IssueInputBuilder(projectKey, issueTypeId, summary)
-                    .setDescription(description)
-                    .setAssignee(assigneeUser)
-                    .build();
+        IssueInput isssue = new IssueInputBuilder(projectKey, issueTypeId, summary)
+                .setDescription(description)
+                .setAssignee(assigneeUser)
+                .build();
 
-            Promise<BasicIssue> createIssue = issueClient.createIssue(isssue);
-            BasicIssue issue = createIssue.claim();
-            log.info("Created issue: {}", issue.getKey());
-        } catch (Exception ex) {
-            ex.printStackTrace();
-        }
-
+        var createIssue = issueClient.createIssue(isssue);
+        BasicIssue issue = createIssue.claim();
+        log.info("Created issue: {}", issue.getKey());
+        return issue;
     }
 
     @Override
-    public void updateIssue(String projectKey, String issueKey, String summary, String description, String assignee,
+    public Promise<Void> updateIssue(String projectKey, String issueKey, String summary, String description, String assignee,
             String issueType)
             throws InterruptedException, ExecutionException {
         log.info("JIRAServiceV9Impl.updateIssue()");
@@ -111,7 +99,7 @@ public class JIRAServiceImpl implements JIRAService {
         // Return of project doesn't exist
         if (projectType.get() == null) {
             log.error("Project {} doesn't exist", projectKey);
-            return;
+            return null;
         }
 
         // Get Issue
@@ -119,7 +107,7 @@ public class JIRAServiceImpl implements JIRAService {
         // Return of issue doesn't exist
         if (issue.get() == null) {
             log.error("Issue {} doesn't exist", issueKey);
-            return;
+            return null;
         }
 
         // Get User by name
@@ -130,7 +118,7 @@ public class JIRAServiceImpl implements JIRAService {
             // Return of user doesn't exist
             if (user.get() == null) {
                 log.error("User {} doesn't exist", assignee);
-                return;
+                return null;
             }
             assigneeUser = user.get();
         }
@@ -139,17 +127,13 @@ public class JIRAServiceImpl implements JIRAService {
 
         // Update Issue
         final IssueRestClient issueClient = restClient.getIssueClient();
-        try {
-            IssueInput isssue = new IssueInputBuilder(projectKey, issueTypeId, summary)
-                    .setDescription(description)
-                    .setAssignee(assigneeUser)
-                    .build();
-            issueClient.updateIssue(issueKey, isssue);
-            log.info("Updated issue: {}", issueKey);
-        } catch (Exception ex) {
-            ex.printStackTrace();
-        }
-
+        IssueInput isssue = new IssueInputBuilder(projectKey, issueTypeId, summary)
+                .setDescription(description)
+                .setAssignee(assigneeUser)
+                .build();
+        Promise<Void> promise = issueClient.updateIssue(issueKey, isssue);
+        log.info("Updated issue: {}", issueKey);
+        return promise;
     }
 
     @Override
@@ -157,14 +141,10 @@ public class JIRAServiceImpl implements JIRAService {
         log.info("JIRAServiceV9Impl.deleteIssue()");
         JiraRestClient restClient = getJiraRestClient();
         final IssueRestClient issueClient = restClient.getIssueClient();
-        try {
-            Promise<Issue> issue = issueClient.getIssue(issueKey);
-            Issue issueToDelete = issue.claim();
-            issueClient.deleteIssue(issueToDelete.getKey(), true);
-            log.info("Deleted issue: {}", issueToDelete.getKey());
-        } catch (Exception ex) {
-            ex.printStackTrace();
-        }
+        Promise<Issue> issue = issueClient.getIssue(issueKey);
+        Issue issueToDelete = issue.claim();
+        issueClient.deleteIssue(issueToDelete.getKey(), true);
+        log.info("Deleted issue: {}", issueToDelete.getKey());
     }
 
     @Override
@@ -172,52 +152,39 @@ public class JIRAServiceImpl implements JIRAService {
         log.info("JIRAServiceV9Impl.addComment()");
         JiraRestClient restClient = getJiraRestClient();
         final IssueRestClient issueClient = restClient.getIssueClient();
-        try {
-            Promise<Issue> issue = issueClient.getIssue(issueKey);
-            Issue issueToGet = issue.claim();
-            log.info("Got issue: {}", issueToGet.getKey());
-        } catch (Exception ex) {
-            ex.printStackTrace();
-        }
+        Promise<Issue> issue = issueClient.getIssue(issueKey);
+        Issue issueToGet = issue.claim();
+        log.info("Got issue: {}", issueToGet.getKey());
     }
 
     @Override
-    public void addAttachment(String issueKey, String filePath, String filename) {
+    public void addAttachment(String issueKey, String filePath, String filename) throws IOException {
         log.info("JIRAServiceV9Impl.addAttachment() - filePath: {} - filename: {}", filePath,
                 filename);
         JiraRestClient restClient = getJiraRestClient();
         final IssueRestClient issueClient = restClient.getIssueClient();
-        try {
-            // Get Stream from File
-			File file = new File(filePath);
-			InputStream inputStream = new FileInputStream(file);
-            
-            Promise<Issue> issue = issueClient.getIssue(issueKey);
-            Issue issueToGet = issue.claim();
-            log.info("Got issue: {}", issueToGet.getKey());
-            // Add Attachment
-			issueClient.addAttachment(issueToGet.getAttachmentsUri(), inputStream, filename);
-			log.info("Added attachment {} to issue: {}", filename, issueToGet.getKey());
-        } catch(Exception ex) {
-            ex.printStackTrace();
-        }
+        // Get Stream from File
+        File file = new File(filePath);
+        InputStream inputStream = new FileInputStream(file);
+        
+        Promise<Issue> issue = issueClient.getIssue(issueKey);
+        Issue issueToGet = issue.claim();
+        log.info("Got issue: {}", issueToGet.getKey());
+        // Add Attachment
+        issueClient.addAttachment(issueToGet.getAttachmentsUri(), inputStream, filename);
+        log.info("Added attachment {} to issue: {}", filename, issueToGet.getKey());
     }
 
     // Check if issue type exists
     @Override
-    public boolean issueTypeExists(String projectKey, String issueType) {
+    public boolean issueTypeExists(String projectKey, String issueType) throws InterruptedException, ExecutionException {
         JiraRestClient restClient = getJiraRestClient();
         ProjectRestClient projectClient = restClient.getProjectClient();
         Promise<Project> projectType = projectClient.getProject(projectKey);
-        try {
-            for (IssueType type : projectType.get().getIssueTypes()) {
-                if (type.getName().equalsIgnoreCase(issueType)) {
-                    return true;
-                }
+        for (IssueType type : projectType.get().getIssueTypes()) {
+            if (type.getName().equalsIgnoreCase(issueType)) {
+                return true;
             }
-        } catch (InterruptedException | ExecutionException e) {
-            // TODO Auto-generated catch block
-            e.printStackTrace();
         }
         return false;
     }
@@ -240,12 +207,8 @@ public class JIRAServiceImpl implements JIRAService {
     public boolean issueExists(String issueKey) {
         JiraRestClient restClient = getJiraRestClient();
         IssueRestClient issueClient = restClient.getIssueClient();
-        try {
-            issueClient.getIssue(issueKey).claim();
-            return true;
-        } catch (Exception e) {
-            return false;
-        }
+        issueClient.getIssue(issueKey).claim();
+        return true;
     }
 
     // Check if user exists
@@ -253,12 +216,8 @@ public class JIRAServiceImpl implements JIRAService {
     public boolean userExists(String userName) {
         JiraRestClient restClient = getJiraRestClient();
         UserRestClient userClient = restClient.getUserClient();
-        try {
-            userClient.getUser(userName).claim();
-            return true;
-        } catch (Exception e) {
-            return false;
-        }
+        userClient.getUser(userName).claim();
+        return true;
     }
 
     // Check if project exists
@@ -266,12 +225,8 @@ public class JIRAServiceImpl implements JIRAService {
     public boolean projectExists(String projectKey) {
         JiraRestClient restClient = getJiraRestClient();
         ProjectRestClient projectClient = restClient.getProjectClient();
-        try {
-            projectClient.getProject(projectKey).claim();
-            return true;
-        } catch (Exception e) {
-            return false;
-        }
+        projectClient.getProject(projectKey).claim();
+        return true;
     }
 
     // Check if attachment exists
@@ -280,56 +235,105 @@ public class JIRAServiceImpl implements JIRAService {
         JiraRestClient restClient = getJiraRestClient();
         IssueRestClient issueClient = restClient.getIssueClient();
         var issue = issueClient.getIssue(issueKey).claim();
-        try {
-            Promise<Issue> issuePromise = issueClient.getIssue(issue.getKey());
-            Issue issueToGet = issuePromise.claim();
-            Iterable<Attachment> attachments = issueToGet.getAttachments();
-            for (Attachment attachment : attachments) {
-                log.info("Got attachment: {}", attachment.getFilename());
-                if (attachment.getFilename().contains("test.txt")) {
-                    return true;
-                }
+        Promise<Issue> issuePromise = issueClient.getIssue(issue.getKey());
+        Issue issueToGet = issuePromise.claim();
+        Iterable<Attachment> attachments = issueToGet.getAttachments();
+        for (Attachment attachment : attachments) {
+            log.info("Got attachment: {}", attachment.getFilename());
+            if (attachment.getFilename().contains(filename)) {
+                return true;
             }
-        } catch (Exception ex) {
-            ex.printStackTrace();
-
         }
         return false;
     }
 
+    // Get Issue by Key
     @Override
     public Issue getIssue(String issueKey) {
         JiraRestClient restClient = getJiraRestClient();
         IssueRestClient issueClient = restClient.getIssueClient();
-        try {
-            Promise<Issue> issue = issueClient.getIssue(issueKey);
-            Issue issueToGet = issue.claim();
-            log.info("Got issue: {}", issueToGet.getKey());
-            return issueToGet;
-        } catch (Exception ex) {
-            ex.printStackTrace();
-        }
-        return null;
+        Promise<Issue> issue = issueClient.getIssue(issueKey);
+        Issue issueToGet = issue.claim();
+        log.info("Got issue: {}", issueToGet.getKey());
+        return issueToGet;
     }
 
+    // Check if comment exists
     @Override
     public boolean commentExists(String issueKey, String comment) {
         JiraRestClient restClient = getJiraRestClient();
         IssueRestClient issueClient = restClient.getIssueClient();
-        try {
-            Promise<Issue> issue = issueClient.getIssue(issueKey);
-            Issue issueToGet = issue.claim();
-            log.info("Got issue: {}", issueToGet.getKey());
-            Iterable<Comment> comments = issueToGet.getComments();
-            for (Comment commentToGet : comments) {
-                if (commentToGet.getBody().contains(comment)) {
-                    return true;
-                }
+        Promise<Issue> issue = issueClient.getIssue(issueKey);
+        Issue issueToGet = issue.claim();
+        log.info("Got issue: {}", issueToGet.getKey());
+        Iterable<Comment> comments = issueToGet.getComments();
+        for (Comment commentToGet : comments) {
+            if (commentToGet.getBody().contains(comment)) {
+                return true;
             }
-        } catch (Exception ex) {
-            ex.printStackTrace();
         }
         return false;
+    }
+
+    // Get Project by Key
+    @Override
+    public Project getProject(String projectKey) {
+        JiraRestClient restClient = getJiraRestClient();
+        ProjectRestClient projectClient = restClient.getProjectClient();
+        Promise<Project> project = projectClient.getProject(projectKey);
+        Project projectToGet = project.claim();
+        log.info("Got project: {}", projectToGet.getKey());
+        return projectToGet;
+    }
+
+    // Get Issue Type
+    @Override
+    public String getIssueType(String projectKey, String issueType) {
+        JiraRestClient restClient = getJiraRestClient();
+        ProjectRestClient projectClient = restClient.getProjectClient();
+        Promise<Project> project = projectClient.getProject(projectKey);
+        Project projectToGet = project.claim();
+        log.info("Got project: {}", projectToGet.getKey());
+        for (IssueType type : projectToGet.getIssueTypes()) {
+            if (type.getName().equalsIgnoreCase(issueType)) {
+                log.info("Got issue type: {}", type.getName());
+                return type.getName();
+            }
+        }
+        return null;
+    }
+
+    // Get comments for an issue
+    @Override
+    public Iterable<Comment> getComments(String issueKey) {
+        JiraRestClient restClient = getJiraRestClient();
+        IssueRestClient issueClient = restClient.getIssueClient();
+        Promise<Issue> issue = issueClient.getIssue(issueKey);
+        Issue issueToGet = issue.claim();
+        log.info("Got issue: {}", issueToGet.getKey());
+        return issueToGet.getComments();
+    }
+
+    // Get attachments for an issue
+    @Override
+    public Iterable<Attachment> getAttachments(String key) {
+        JiraRestClient restClient = getJiraRestClient();
+        IssueRestClient issueClient = restClient.getIssueClient();
+        Promise<Issue> issue = issueClient.getIssue(key);
+        Issue issueToGet = issue.claim();
+        log.info("Got issue: {}", issueToGet.getKey());
+        return issueToGet.getAttachments();
+    }
+
+    // Get fields for an issue
+    @Override
+    public Iterable<IssueField> getFields(String issueKey) {
+        JiraRestClient restClient = getJiraRestClient();
+        IssueRestClient issueClient = restClient.getIssueClient();
+        Promise<Issue> issue = issueClient.getIssue(issueKey);
+        Issue issueToGet = issue.claim();
+        log.info("Got issue: {}", issueToGet.getKey());
+        return issueToGet.getFields();
     }
 
 }

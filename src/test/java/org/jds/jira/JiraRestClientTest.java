@@ -1,11 +1,12 @@
 package org.jds.jira;
 
 
-import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
 import java.util.concurrent.ExecutionException;
@@ -43,6 +44,12 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 public class JiraRestClientTest {
+
+	private static final String ADMIN = "admin";
+	private static final String API_JIRA_TEST = "API JIRA Test";
+	private static final String API_JIRA_TEST_2_1 = "API JIRA Test 2.1";
+	private static final String FILE_NAME = "test.txt";
+	private static final String PATH = "src/test/resources/";
 
 	@Value("${jira.username}")
 	private static final String USERNAME = "dalamar01977";
@@ -90,7 +97,7 @@ public class JiraRestClientTest {
 		final IssueRestClient issueClient = restClient.getIssueClient();
 		String issueKey = "";
 		try {
-			IssueInput isssue = new IssueInputBuilder(PROJECT_KEY, issueTypeId, "API JIRA Test").build();
+			IssueInput isssue = new IssueInputBuilder(PROJECT_KEY, issueTypeId, API_JIRA_TEST).build();
 			Promise<BasicIssue> createIssue = issueClient.createIssue(isssue);
 			BasicIssue issue = createIssue.claim();
 			issueKey = issue.getKey();
@@ -104,7 +111,7 @@ public class JiraRestClientTest {
 		try {
 			Promise<Issue> issue = issueClient.getIssue(issueKey);
 			Issue issueToUpdate = issue.claim();
-			IssueInput issueInput = new IssueInputBuilder(project, issueToUpdate.getIssueType()).setSummary("API JIRA Test 2.1").build();
+			IssueInput issueInput = new IssueInputBuilder(project, issueToUpdate.getIssueType()).setSummary(API_JIRA_TEST_2_1).build();
 			issueClient.updateIssue(issueKey, issueInput);
 			log.info("Updated issue: {}", issueKey);
 		} catch(Exception ex) {
@@ -120,6 +127,22 @@ public class JiraRestClientTest {
 		} catch(Exception ex) {
 			ex.printStackTrace();
 		}
+
+		// Use the service
+		Project projectFromService = jiraService.getProject(PROJECT_KEY);
+		assertEquals(PROJECT_KEY, projectFromService.getKey());
+		jiraService.getIssueType(PROJECT_KEY, ISSUE_TYPE);
+		assertEquals(ISSUE_TYPE, jiraService.getIssueType(PROJECT_KEY, ISSUE_TYPE));
+		BasicIssue issue = jiraService.createIssue(PROJECT_KEY, API_JIRA_TEST, API_JIRA_TEST, ADMIN, ISSUE_TYPE);
+		Issue issueGet = jiraService.getIssue(issue.getKey());
+		assertTrue(issueGet.getKey().length() > 0);
+		Promise<Void> empty = jiraService.updateIssue(PROJECT_KEY, issueGet.getKey(), API_JIRA_TEST_2_1, API_JIRA_TEST_2_1, ADMIN, ISSUE_TYPE);
+		// wait for a while to let the issue update
+		empty.get();
+		Issue issueUpdated = jiraService.getIssue(issueGet.getKey());
+		assertEquals(API_JIRA_TEST_2_1, issueUpdated.getSummary());
+		jiraService.deleteIssue(issueUpdated.getKey());
+
 	}
 
 	// Get IssueTypeId
@@ -147,7 +170,7 @@ public class JiraRestClientTest {
 		var issueTypeId = getIssueTypeId(PROJECT_KEY, ISSUE_TYPE);
 
 		try {
-			IssueInput isssue = new IssueInputBuilder(PROJECT_KEY, issueTypeId, "API JIRA Test").build();
+			IssueInput isssue = new IssueInputBuilder(PROJECT_KEY, issueTypeId, API_JIRA_TEST).build();
 			Promise<BasicIssue> createIssue = issueClient.createIssue(isssue);
 			BasicIssue issue = createIssue.claim();
 			issueKey = issue.getKey();
@@ -208,17 +231,31 @@ public class JiraRestClientTest {
 		} catch(Exception ex) {
 			ex.printStackTrace();
 		}
+
+		// Use the service
+		BasicIssue issueFromService = jiraService.createIssue(PROJECT_KEY, "API JIRA Comments test", "API JIRA Comments test", ADMIN, ISSUE_TYPE);
+		assertTrue(issueFromService.getKey().length() > 0);
+		jiraService.addComment(issueFromService.getKey(), "This is an important comment to reply.");
+		Iterable<Comment> comments = jiraService.getComments(issueFromService.getKey());
+		for(Comment comment : comments) {
+			if (comment.getBody().contains("automated reply")) {
+				assertTrue(comment.getBody().contains("automated reply"));
+				jiraService.addComment(issueFromService.getKey(), "This is an automated reply to the important comment.");
+			}
+		}
+		jiraService.deleteIssue(issueFromService.getKey());
+
 	}
 
 	@Test
-	void testUploadAttachment() throws InterruptedException, ExecutionException {
+	void testUploadAttachment() throws InterruptedException, ExecutionException, IOException {
 
 		// Create Issue
 		var issueTypeId = getIssueTypeId(PROJECT_KEY, ISSUE_TYPE);
 		BasicIssue issue = null;
 		final IssueRestClient issueClient = restClient.getIssueClient();
 		try {
-			IssueInput isssue = new IssueInputBuilder("JDS", issueTypeId, "API JIRA Attach test").build();
+			IssueInput isssue = new IssueInputBuilder(PROJECT_KEY, issueTypeId, "API JIRA Attach test").build();
 			Promise<BasicIssue> createIssue = issueClient.createIssue(isssue);
 			issue = createIssue.claim();
 			log.info("Created issue: {}", issue.getKey());
@@ -229,13 +266,13 @@ public class JiraRestClientTest {
 		// Upload Attachment
 		try {
 			// Get Stream from File
-			File file = new File("src/test/resources/test.txt");
+			File file = new File(PATH + FILE_NAME);
 			InputStream inputStream = new FileInputStream(file);
 
 			Promise<Issue> issuePromise = issueClient.getIssue(issue.getKey());
 			Issue issueToGet = issuePromise.claim();
 
-			issueClient.addAttachment(issueToGet.getAttachmentsUri(), inputStream, "test.txt");
+			issueClient.addAttachment(issueToGet.getAttachmentsUri(), inputStream, FILE_NAME);
 			log.info("Added attachment to issue: {}", issue.getKey());
 		} catch(Exception ex) {
 			ex.printStackTrace();
@@ -250,7 +287,7 @@ public class JiraRestClientTest {
 			assertTrue(attachments.iterator().hasNext());
 			for(Attachment attachment : attachments) {
 				log.info("Got attachment: {}", attachment.getFilename());
-				assertTrue(attachment.getFilename().contains("test.txt"));
+				assertTrue(attachment.getFilename().contains(FILE_NAME));
 			}
 		} catch(Exception ex) {
 			ex.printStackTrace();
@@ -263,6 +300,19 @@ public class JiraRestClientTest {
 		} catch(Exception ex) {
 			ex.printStackTrace();
 		}
+
+		// Use the service
+		BasicIssue issueFromService = jiraService.createIssue(PROJECT_KEY, "API JIRA Attach test", "API JIRA Attach test", ADMIN, ISSUE_TYPE);
+		Issue issueService = jiraService.getIssue(issueFromService.getKey());
+		assertTrue(issueService.getKey().length() > 0);
+		jiraService.addAttachment(issueFromService.getKey(), PATH + FILE_NAME, null);
+		Iterable<Attachment> attachments = jiraService.getAttachments(issueFromService.getKey());
+		for(Attachment attachment : attachments) {
+			if (attachment.getFilename().contains(FILE_NAME)) {
+				assertTrue(attachment.getFilename().contains(FILE_NAME));
+			}
+		}
+		jiraService.deleteIssue(issueFromService.getKey());
 	}
 
 	@Test
@@ -275,7 +325,7 @@ public class JiraRestClientTest {
 		var issueTypeId = getIssueTypeId(PROJECT_KEY, ISSUE_TYPE);
 
 		try {
-			IssueInput isssue = new IssueInputBuilder(PROJECT_KEY, issueTypeId, "API JIRA Test").build();
+			IssueInput isssue = new IssueInputBuilder(PROJECT_KEY, issueTypeId, API_JIRA_TEST).build();
 			Promise<BasicIssue> createIssue = issueClient.createIssue(isssue);
 			BasicIssue issue = createIssue.claim();
 			issueKey = issue.getKey();
@@ -305,6 +355,15 @@ public class JiraRestClientTest {
 		} catch(Exception ex) {
 			ex.printStackTrace();
 		}
+
+		// Use the service
+		BasicIssue issueFromService = jiraService.createIssue(PROJECT_KEY, "API JIRA Fields test", "API JIRA Fields test", ADMIN, ISSUE_TYPE);
+		Issue issueService = jiraService.getIssue(issueFromService.getKey());
+		assertTrue(issueService.getKey().length() > 0);
+		Iterable<IssueField> fields = jiraService.getFields(issueFromService.getKey());
+		assertTrue(fields.iterator().hasNext());
+		jiraService.deleteIssue(issueFromService.getKey());
+
 	}
 
 }
