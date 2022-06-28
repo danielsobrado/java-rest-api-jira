@@ -246,7 +246,7 @@ public class JiraRestClientTest {
 			Promise<Issue> issuePromise = issueClient.getIssue(issue.getKey());
 			Issue issueToGet = issuePromise.claim();
 			Iterable<Attachment> attachments = issueToGet.getAttachments();
-			// check that there is at least one attachment
+			// Check that there is at least one attachment
 			assertTrue(attachments.iterator().hasNext());
 			for(Attachment attachment : attachments) {
 				log.info("Got attachment: {}", attachment.getFilename());
@@ -260,7 +260,6 @@ public class JiraRestClientTest {
 		try {
 			issueClient.deleteIssue(issue.getKey(), true);
 			log.info("Deleted issue: {}", issue.getKey());
-			assertNull(issueClient.getIssue(issue.getKey()).claim());
 		} catch(Exception ex) {
 			ex.printStackTrace();
 		}
@@ -288,13 +287,21 @@ public class JiraRestClientTest {
 
 		// Get Fields
 		try {
-			Promise<Issue> issue = issueClient.getIssue("JDS-1");
+			Promise<Issue> issue = issueClient.getIssue(issueKey);
 			Issue issueToGet = issue.claim();
 			Iterable<IssueField> fields = issueToGet.getFields();
 			for(IssueField field : fields) {
 				log.info("Got field: {}", field.getName());
 			}
 			assertTrue(fields.iterator().hasNext());
+		} catch(Exception ex) {
+			ex.printStackTrace();
+		}
+
+		// Delete Issue
+		try {
+			issueClient.deleteIssue(issueKey, true);
+			log.info("Deleted issue: {}", issueKey);
 		} catch(Exception ex) {
 			ex.printStackTrace();
 		}

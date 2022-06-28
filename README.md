@@ -64,7 +64,10 @@ My objective was to create issues, read and write comments and attach files to t
 
 Write comments, read them and reply:
 
+![JIRA Postman](./images/Comments.JPG)
+
 JIRA doesn't have a comment reply functionality, it will be a new comment.
 
 Attachments:
 
+![JIRA Postman](./images/Attachments.JPG)
